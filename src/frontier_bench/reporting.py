@@ -8,7 +8,7 @@ import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 from .runner import write_json, read_jsonl
-from .evaluation import paired_summary
+from .evaluation import full_statistics
 
 COLORS=["#267ca4","#aa4455","#558844","#995fa8","#c17f24","#188a87","#555d70"]
 
@@ -49,7 +49,7 @@ def report(root: str|Path) -> Path:
         write_json(root/"summaries.json",summaries)
         if summaries: pq.write_table(pa.Table.from_pylist(summaries),root/"summaries.parquet")
         cfg=json.loads((root/"resolved-config.json").read_text())
-        write_json(root/"statistics.json",paired_summary(summaries,samples=cfg["evaluation"]["bootstrap_samples"],confidence=cfg["evaluation"]["confidence"],seed=cfg["seed"]))
+        write_json(root/"statistics.json",full_statistics(summaries,samples=cfg["evaluation"]["bootstrap_samples"],confidence=cfg["evaluation"]["confidence"],seed=cfg["seed"]))
     elif (root/"summary.json").exists():
         validate_raw_run(root)
         summaries=[{**json.loads((root/"summary.json").read_text()),"run_path":"."}]; comparison={"status":summaries[0]["status"],"planned":1,"executed":1,"skipped":[],"failed":[]}

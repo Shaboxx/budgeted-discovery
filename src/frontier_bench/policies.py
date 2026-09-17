@@ -13,13 +13,21 @@ import numpy as np
 
 from .schemas import Action, Choice, FEATURES, PublicView, stream_seed
 
-POLICY_VERSION = "1.0.0"
+POLICY_VERSION = "1.1.0"
 POLICY_NAMES = ("random", "graph", "query", "heuristic", "fixed", "round_robin", "learned")
 GRAPH_OPERATIONS = frozenset(("inspect", "posts", "neighbors"))
+# Policy 1.0.0 defaults, retained so recorded histories replay unchanged.
+DEFAULT_GRAPH_OPERATIONS = ("inspect", "posts", "neighbors")
+DEFAULT_ROTATION = ("graph", "query", "heuristic")
+EXPERT_NAMES = ("graph", "query", "heuristic")
+
+
+def base_operation(action: Action) -> str:
+    return action.base_operation if action.operation in ("page", "revisit") else action.operation
 
 
 def family(action: Action) -> str:
-    op = action.base_operation if action.operation in ("page", "revisit") else action.operation
+    op = base_operation(action)
     if op in GRAPH_OPERATIONS:
         return "graph"
     if op == "search":
@@ -36,12 +44,18 @@ def feature_dict(values: tuple[float, ...], names: tuple[str, ...] = FEATURES) -
     return result
 
 
-def acquisition_slots(view: PublicView, wanted_family: str | None = None) -> list[int]:
-    """Stable order makes a fixed RNG draw invariant to candidate slot ordering."""
+def acquisition_slots(view: PublicView, wanted_family: str | None = None,
+                      operations: tuple[str, ...] | None = None) -> list[int]:
+    """Stable order makes a fixed RNG draw invariant to candidate slot ordering.
+
+    `operations` restricts eligibility by base operation (pages and revisits inherit
+    their base). It is the declared action set of an expert, not a hidden score.
+    """
     return sorted(
         (i for i, (action, valid) in enumerate(zip(view.actions, view.valid))
          if valid and family(action) != "control"
-         and (wanted_family is None or family(action) == wanted_family)),
+         and (wanted_family is None or family(action) == wanted_family)
+         and (operations is None or base_operation(action) in operations)),
         key=lambda i: view.actions[i].id,
     )
 
@@ -126,10 +140,32 @@ class RandomPolicy(Policy):
 
 
 class HeuristicPolicy(Policy):
+    """Graph, query, or all-operation heuristic expert.
+
+    Policy 1.1.0: the graph expert's eligible operations are declared by
+    `graph_operations`. The 1.0.0 default (inspect/posts/neighbors) has no operation
+    preference, so `inspect` (which can never surface an account) was selected by hash
+    tie-break; new experiments declare `["neighbors"]` so graph expansion means
+    neighborhood expansion, its pages and revisits.
+    """
+
+    def __init__(self, name: str, seed: int, config: dict | None = None):
+        super().__init__(name, seed, config)
+        operations = tuple(self.config.get("graph_operations", DEFAULT_GRAPH_OPERATIONS))
+        if not operations or not set(operations) <= GRAPH_OPERATIONS:
+            raise ValueError("graph_operations must be a nonempty subset of inspect/posts/neighbors")
+        self.graph_operations = operations
+
+    def eligible(self, view: PublicView) -> list[int]:
+        if self.name == "graph":
+            return acquisition_slots(view, "graph", self.graph_operations)
+        if self.name == "query":
+            return acquisition_slots(view, "query")
+        return acquisition_slots(view)
+
     def scores(self, view: PublicView) -> dict[int, float]:
-        wanted = self.name if self.name in ("graph", "query") else None
         return {i: heuristic_score(feature_dict(view.features[i], view.feature_names), self.name, self.use_motif)
-                for i in acquisition_slots(view, wanted)}
+                for i in self.eligible(view)}
 
     def probabilities(self, view: PublicView) -> dict[int, float]:
         return {best_slot(view, self.scores(view)): 1.0}
@@ -147,7 +183,7 @@ class FixedMixturePolicy(Policy):
 
     def expert_choices(self, view: PublicView) -> list[tuple[str, int, float]]:
         weighted = [("graph", self.graph_weight), ("query", 1.0 - self.graph_weight)]
-        active = [(name, weight) for name, weight in weighted if weight > 0 and acquisition_slots(view, name)]
+        active = [(name, weight) for name, weight in weighted if weight > 0 and self.experts[name].eligible(view)]
         if not active:
             # At endpoint weights, preserve the strategy instead of secretly
             # switching a graph-only policy to search (or the reverse).
@@ -173,7 +209,10 @@ class RoundRobinPolicy(Policy):
 
     def __init__(self, name: str, seed: int, config: dict | None = None):
         super().__init__(name, seed, config)
-        self.experts = tuple(HeuristicPolicy(name, seed, self.config) for name in ("graph", "query", "heuristic"))
+        rotation = tuple(self.config.get("rotation", DEFAULT_ROTATION))
+        if not rotation or not set(rotation) <= set(EXPERT_NAMES) or len(set(rotation)) != len(rotation):
+            raise ValueError("rotation must list distinct experts among graph/query/heuristic")
+        self.experts = tuple(HeuristicPolicy(name, seed, self.config) for name in rotation)
         self.next_expert = 0
 
     def _proposal(self, view: PublicView) -> tuple[int, int]:

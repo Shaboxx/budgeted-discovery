@@ -34,6 +34,9 @@ def apply_limits(cfg,args):
         if value is not None:
             if value<=0: raise ValueError(f"{field} must be positive")
             cfg["experiment"][field]=value
+    if getattr(args,"seeds",None):
+        cfg["experiment"]["seeds"]=[int(s) for s in str(args.seeds).split(",") if s.strip()]
+        if not cfg["experiment"]["seeds"]: raise ValueError("--seeds must list at least one integer")
     if getattr(args,"fixed_from",None):
         tuned=json.loads(Path(args.fixed_from).read_text())
         if set(cfg["experiment"]["seeds"]) & set(tuned["development_seeds"]): raise ValueError("test seeds overlap mixture development")
@@ -90,7 +93,7 @@ def main(argv=None):
     p=sub.add_parser("generate"); p.add_argument("--config",required=True); p.add_argument("--output",default="runs/generated-world")
     p=sub.add_parser("validate-world"); p.add_argument("--world",required=True)
     for command in ("run","compare","tune"):
-        p=sub.add_parser(command); p.add_argument("--config",required=True); p.add_argument("--output"); p.add_argument("--max-runs",type=int); p.add_argument("--max-minutes",type=float); p.add_argument("--max-storage-mb",type=int); p.add_argument("--fixed-from")
+        p=sub.add_parser(command); p.add_argument("--config",required=True); p.add_argument("--output"); p.add_argument("--max-runs",type=int); p.add_argument("--max-minutes",type=float); p.add_argument("--max-storage-mb",type=int); p.add_argument("--fixed-from"); p.add_argument("--seeds",help="comma-separated world seeds overriding experiment.seeds")
     p=sub.add_parser("replay"); p.add_argument("--run",required=True)
     p=sub.add_parser("report"); p.add_argument("--runs",required=True)
     p=sub.add_parser("smoke"); p.add_argument("--output",default="runs/smoke"); p.add_argument("--world")

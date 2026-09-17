@@ -19,7 +19,7 @@ from .schemas import Action, canonical, digest, SCHEMA_VERSION, FEATURES, stream
 from .world import load_world, save_world, world_hash, world_content_hash
 from .environment import FrontierEnv
 from .policies import make_policy, POLICY_VERSION
-from .evaluation import evaluate, paired_summary, EVALUATOR_VERSION
+from .evaluation import evaluate, paired_summary, full_statistics, EVALUATOR_VERSION
 
 def write_json(path: Path, value):
     path.parent.mkdir(parents=True,exist_ok=True)
@@ -71,6 +71,26 @@ def receive(policy, info: dict):
         policy.observe(Action.from_dict(info["action"]),tuple(info["features"]),info["feedback"])
     for update in info.get("feedback_updates",[]):
         policy.observe(Action.from_dict(update["action"]),tuple(update["features"]),update)
+
+def apply_condition(run_cfg: dict, condition: str, exp: dict) -> str:
+    """Resolve a "<temporal>_<observation>" condition label into run configuration.
+
+    Legacy labels complete/restricted set only provider.mode. Declared
+    experiment.observation_conditions entries apply explicit provider overrides so
+    each restriction mechanism (cap, ranking, availability lag, failures) can be varied
+    separately on the same world. Returns the temporal token.
+    """
+    temporal,_,observation=condition.partition("_")
+    if temporal not in ("stationary","evolving") or not observation: raise ValueError("unknown factorial condition")
+    run_cfg["world"]["stationary"]=temporal=="stationary"; run_cfg["content"]["stationary"]=temporal=="stationary"
+    declared=exp.get("observation_conditions") or {}
+    if observation in declared:
+        overrides=declared[observation]
+        if not set(overrides)<=set(run_cfg["provider"]): raise ValueError(f"observation condition {observation} overrides unknown provider keys")
+        run_cfg["provider"].update(deepcopy(overrides))
+    elif observation in ("complete","restricted"): run_cfg["provider"]["mode"]=observation
+    else: raise ValueError(f"undeclared observation condition {observation}")
+    return temporal
 
 def run_one(world_path: str|Path, config: dict, destination: str|Path, *, deadline: float|None=None, tags: dict|None=None, storage_root: str|Path|None=None, storage_base_bytes: int|None=None) -> dict:
     cfg=resolve(config); path=Path(destination); path.mkdir(parents=True,exist_ok=True)
@@ -133,7 +153,14 @@ def run_one(world_path: str|Path, config: dict, destination: str|Path, *, deadli
     executions=read_jsonl(path/"executions.jsonl")
     receipts=[e["info"]["receipt"] for e in executions if "receipt" in e["info"]]
     outcomes=[e["info"]["feedback"] for e in executions if "feedback" in e["info"]]
-    summary={**(rows[-1] if rows else {}),"policy":policy.name,"seed":cfg["seed"],"condition":f'{"stationary" if origin_stationary else "evolving"}_{cfg["provider"]["mode"]}',
+    observation=(tags or {}).get("observation") or cfg["provider"]["mode"]
+    by_family={"graph":0,"query":0,"other":0}
+    for e in executions:
+        action=e["info"].get("action"); feedback=e["info"].get("feedback")
+        if action and feedback:
+            base=action.get("base_operation") if action.get("operation") in ("page","revisit") else action.get("operation")
+            by_family["graph" if base in ("inspect","posts","neighbors") else "query" if base=="search" else "other"]+=len(feedback.get("new_account_ids",[]))
+    summary={**(rows[-1] if rows else {}),"policy":policy.name,"seed":cfg["seed"],"condition":f'{"stationary" if origin_stationary else "evolving"}_{observation}',"observation":observation,"new_accounts_by_family":by_family,
         "arrangement":origin_arrangement,"sparse_probes":cfg["actions"]["sparse_probes"],"use_motif":cfg["policy"]["use_motif"],"regime":(tags or {}).get("regime","default"),
         "world_seed":origin.get("seed"),
         "acquisition_contract_hash":digest({k:cfg[k] for k in ("initial","provider","feedback","actions","budget")}),
@@ -199,9 +226,7 @@ def compare(config: dict, output: str|Path|None=None) -> dict:
         elif used_bytes>exp["max_storage_mb"]*2**20: reason="storage safeguard"
         if reason: skipped.append({"job":label,"reason":reason}); continue
         run_cfg=deepcopy(cfg); run_cfg["seed"]=seed; run_cfg["target"]["arrangement"]=arrangement
-        temporal,provider=condition.split("_")
-        if temporal not in ("stationary","evolving") or provider not in ("complete","restricted"): raise ValueError("unknown factorial condition")
-        run_cfg["world"]["stationary"]=temporal=="stationary"; run_cfg["content"]["stationary"]=temporal=="stationary"; run_cfg["provider"]["mode"]=provider; run_cfg["policy"]["name"]=policy
+        temporal=apply_condition(run_cfg,condition,exp); run_cfg["policy"]["name"]=policy
         key=(seed,arrangement,temporal)
         try:
             if key not in worlds:
@@ -213,7 +238,7 @@ def compare(config: dict, output: str|Path|None=None) -> dict:
                     wp=root/"worlds"/f"{seed}-{arrangement}-{temporal}"; save_world(generate_world(run_cfg),wp)
                     used_bytes+=sum(p.stat().st_size for p in wp.iterdir() if p.is_file())
                 worlds[key]=wp
-            result=run_one(worlds[key],run_cfg,root/"runs"/label,deadline=deadline,tags={"regime":exp["phase"]},storage_root=root,storage_base_bytes=used_bytes)
+            result=run_one(worlds[key],run_cfg,root/"runs"/label,deadline=deadline,tags={"regime":exp["phase"],"observation":condition.partition("_")[2]},storage_root=root,storage_base_bytes=used_bytes)
             used_bytes+=sum(p.stat().st_size for p in (root/"runs"/label).iterdir() if p.is_file())+2000
             result["run_path"]=f"runs/{label}"; summaries.append(result)
         except Exception as exc:
@@ -221,7 +246,7 @@ def compare(config: dict, output: str|Path|None=None) -> dict:
         append(root/"progress.jsonl",{"job":label,"completed":len(summaries),"failures":len(failures)})
     write_json(root/"summaries.json",summaries)
     if summaries: pq.write_table(pa.Table.from_pylist(summaries),root/"summaries.parquet")
-    statistics=paired_summary(summaries,samples=cfg["evaluation"]["bootstrap_samples"],confidence=cfg["evaluation"]["confidence"],seed=cfg["seed"])
+    statistics=full_statistics(summaries,samples=cfg["evaluation"]["bootstrap_samples"],confidence=cfg["evaluation"]["confidence"],seed=cfg["seed"])
     write_json(root/"statistics.json",statistics)
     result=dict(schema_version=SCHEMA_VERSION,planned=len(jobs),executed=len(summaries),failed=failures,skipped=skipped,
         wall_seconds=time.perf_counter()-start,config_hash=config_hash(cfg),source=source_identity(),

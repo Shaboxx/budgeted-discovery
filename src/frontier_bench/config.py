@@ -44,13 +44,17 @@ class Config:
     content: dict = field(default_factory=lambda: dict(background_probability=0.3, topic_probability=0.8, index_delay=1, stationary=False,fixture="",fixture_posts_per_tick=1,index_delay_jitter=0,ambiguity_probability=0.15,hashtag_probability=0.6,mention_probability=0.1,change_tick=None,change_multiplier=2))
     target: dict = field(default_factory=lambda: dict(arrangement="concentrated", fraction=0.25))
     initial: dict = field(default_factory=lambda: dict(accounts=3, vocabulary=["tabletop", "dice"]))
-    provider: dict = field(default_factory=lambda: dict(mode="restricted", page_size=5, failure_probability=0.05, unavailable_operations=[], ranking_noise=0.05, recency_weight=0.15, latency=0, costs={"inspect":1.0,"posts":1.0,"neighbors":1.0,"search":1.5,"page":1.0,"revisit":1.0}))
-    feedback: dict = field(default_factory=lambda: dict(mode="operational", delay=1, noise=0.1))
+    provider: dict = field(default_factory=lambda: dict(mode="restricted", page_size=5, failure_probability=0.05, unavailable_operations=[], ranking_noise=0.05, recency_weight=0.15, latency=0, availability_lag=0, costs={"inspect":1.0,"posts":1.0,"neighbors":1.0,"search":1.5,"page":1.0,"revisit":1.0}))
+    feedback: dict = field(default_factory=lambda: dict(mode="operational", delay=1, noise=0.1, proxy="visible_text"))
     actions: dict = field(default_factory=lambda: dict(cap=64, sparse_probes=True, min_term_support=2, revisit_after=2, max_terms=3, branch_history=12, proposals_per_family=16))
     budget: dict = field(default_factory=lambda: dict(requests=24, cost=32.0, slots_per_tick=4, max_steps=64))
-    policy: dict = field(default_factory=lambda: dict(name="random", epsilon=0.15, learning_rate=0.02, graph_weight=0.5, use_motif=True, pretrained=False))
+    policy: dict = field(default_factory=lambda: dict(name="random", epsilon=0.15, learning_rate=0.02, graph_weight=0.5, use_motif=True, pretrained=False,
+        # Policy 1.0.0 behaviour is the default so recorded histories replay unchanged; new experiments declare narrower sets.
+        graph_operations=["inspect","posts","neighbors"], rotation=["graph","query","heuristic"]))
     evaluation: dict = field(default_factory=lambda: dict(bootstrap_samples=300, confidence=0.95, panel_size=8, growth_threshold=0.25))
-    experiment: dict = field(default_factory=lambda: dict(world_path=None, output="runs/smoke", policies=["random","graph","query","heuristic","fixed","round_robin","learned"], seeds=[41,42], conditions=["stationary_complete","stationary_restricted","evolving_complete","evolving_restricted"], arrangements=["concentrated","distributed","weak"], max_runs=12, max_minutes=5.0, max_storage_mb=200, allow_paper=False, phase="test", fixed_weights=[0.25,0.5,0.75],fixed_selection=None))
+    experiment: dict = field(default_factory=lambda: dict(world_path=None, output="runs/smoke", policies=["random","graph","query","heuristic","fixed","round_robin","learned"], seeds=[41,42], conditions=["stationary_complete","stationary_restricted","evolving_complete","evolving_restricted"], arrangements=["concentrated","distributed","weak"], max_runs=12, max_minutes=5.0, max_storage_mb=200, allow_paper=False, phase="test", fixed_weights=[0.25,0.5,0.75],fixed_selection=None,
+        # Declared observation conditions: {name: provider overrides}; condition strings are "<temporal>_<name>".
+        observation_conditions=None))
 
 def _merge(base: dict, patch: dict, prefix: str = "") -> dict:
     for k,v in patch.items():
@@ -71,6 +75,18 @@ def resolve(patch: dict | None = None) -> dict:
     if cfg["actions"]["cap"] < 8: raise ValueError("candidate cap must be at least 8")
     if b["requests"] < 1 or b["cost"] <= 0 or b["slots_per_tick"] < 1: raise ValueError("invalid budget")
     if cfg["feedback"]["mode"] not in ("oracle","operational"): raise ValueError("unknown feedback mode")
+    if cfg["feedback"]["proxy"] not in ("visible_text","profile_only"): raise ValueError("unknown feedback proxy")
+    if int(cfg["provider"]["availability_lag"])<0: raise ValueError("negative availability_lag")
+    ops=cfg["policy"]["graph_operations"]
+    if not ops or not set(ops)<={"inspect","posts","neighbors"}: raise ValueError("graph_operations must be a nonempty subset of inspect/posts/neighbors")
+    rotation=cfg["policy"]["rotation"]
+    if not rotation or not set(rotation)<={"graph","query","heuristic"} or len(set(rotation))!=len(rotation): raise ValueError("rotation must list distinct experts among graph/query/heuristic")
+    declared=cfg["experiment"]["observation_conditions"]
+    if declared is not None:
+        if not isinstance(declared,dict) or not declared: raise ValueError("observation_conditions must be a nonempty mapping")
+        for name,overrides in declared.items():
+            if not isinstance(name,str) or not name or "_" in name: raise ValueError("observation condition names are single tokens without underscores")
+            if not isinstance(overrides,dict) or not set(overrides)<=set(cfg["provider"]): raise ValueError(f"observation condition {name} overrides unknown provider keys")
     if cfg["provider"]["mode"] not in ("complete","restricted"): raise ValueError("unknown provider mode")
     if any(float(v)<=0 for v in cfg["provider"]["costs"].values()): raise ValueError("costs must be positive")
     if cfg["provider"]["latency"] < 0: raise ValueError("negative latency")

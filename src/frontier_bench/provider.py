@@ -16,6 +16,9 @@ class SimulatedProvider:
 
     def __init__(self, world: World, config: dict, seed: int):
         self._world=world; self.config=deepcopy(config); self.seed=seed
+        # Observation-side availability lag: documents become retrievable lag ticks after their
+        # world availability. It changes only what the provider exposes, never the world.
+        self.lag=int(self.config.get("availability_lag",0))
         self._accounts={a["id"]:a for a in world.accounts}
         self._indices={}; self._cursors={}
 
@@ -29,7 +32,7 @@ class SimulatedProvider:
 
     def _index(self, tick: int):
         if tick not in self._indices:
-            docs=sorted((p for p in self._world.posts if p["available_at"]<=tick),key=lambda p:p["id"])
+            docs=sorted((p for p in self._world.posts if p["available_at"]+self.lag<=tick),key=lambda p:p["id"])
             index=None
             if docs:
                 index=bm25s.BM25()
@@ -87,7 +90,7 @@ class SimulatedProvider:
                 rows=[a for n in sorted(neighbors) if (a:=self.account(n,scope)) is not None]
         elif base.operation=="posts":
             kind="post"
-            rows=sorted((p for p in self._world.posts if p["author"]==base.subject and p["available_at"]<=scope and p["event_at"]>=base.since and (base.until<0 or p["event_at"]<=base.until)),key=lambda p:(-p["event_at"],p["id"]))
+            rows=sorted((p for p in self._world.posts if p["author"]==base.subject and p["available_at"]+self.lag<=scope and p["event_at"]>=base.since and (base.until<0 or p["event_at"]<=base.until)),key=lambda p:(-p["event_at"],p["id"]))
         elif base.operation=="search":
             kind="post"; rows=self.search(base,scope)
         else:

@@ -66,7 +66,12 @@ class FrontierEnv(gym.Env):
         if f["mode"]=="oracle": return float(identity in set(self._world.truth["relevant_accounts"]))
         # Operational estimates derive ONLY from currently observed text, not evaluator truth.
         a=self._knowledge.accounts[identity]
-        visible=a.get("profile","")+" "+" ".join(p["text"] for p in self._knowledge.posts.values() if p["author"]==identity)
+        if f.get("proxy","visible_text")=="profile_only":
+            # Route-independent proxy: every surfacing route returns the profile stub, so the
+            # estimate cannot depend on whether a post was bundled with the account.
+            visible=a.get("profile","")
+        else:
+            visible=a.get("profile","")+" "+" ".join(p["text"] for p in self._knowledge.posts.values() if p["author"]==identity)
         tokens=set(words(visible)); overlap=tokens.intersection(self._knowledge.seed_terms)
         value=0.8 if overlap else 0.2
         rng=np.random.default_rng(stream_seed(self.config["seed"],"feedback",identity,self.tick))
