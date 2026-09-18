@@ -44,9 +44,12 @@ def main(argv=None) -> int:
     gq983 = condition_summary(complete_rows, baseline="query", samples=args.samples, confidence=0.9833, seed=args.seed, reference_condition=reference)
     graph95 = next(c for c in gq95["contrasts"] if c["policy"] == "graph")
     graph983 = next(c for c in gq983["contrasts"] if c["policy"] == "graph")
-    stress = next(c for c in conditions if c.endswith("_stress"))
-    primary = graph95["interaction_vs_reference"][stress]
-    primary_verdict = "supported" if primary["interval"] and (primary["interval"][0] > 0 or primary["interval"][1] < 0) else "not supported"
+    stress = next((c for c in conditions if c.endswith("_stress")), None)
+    if stress is not None:
+        primary = graph95["interaction_vs_reference"][stress]
+        primary_verdict = "supported" if primary["interval"] and (primary["interval"][0] > 0 or primary["interval"][1] < 0) else "not supported"
+    else:
+        primary = {"mean": None, "interval": None, "seed_blocks": 0, "positive": 0, "zero": 0, "negative": 0}; primary_verdict = "not applicable (no stress condition)"
     mechanisms = {c: graph983["interaction_vs_reference"][c] for c in conditions if c not in (reference, stress)}
     # Paired SD for calibration.
     per_block = defaultdict(lambda: defaultdict(list))
@@ -121,7 +124,7 @@ def main(argv=None) -> int:
         lines.append("")
     lines += ["## Cell means (new unique reference-relevant accounts)", "", "| policy | condition | " + " | ".join(sorted({a for (_, _, a) in cells})) + " |", "|---|---|" + "---:|" * len({a for (_, _, a) in cells})]
     arrangements = sorted({a for (_, _, a) in cells})
-    for p in ("random", "graph", "query", "fixed", "round_robin"):
+    for p in [p for p in ("random", "graph", "query", "fixed", "round_robin") if any(k[0] == p for k in cells)]:
         for c in conditions:
             lines.append(f"| {p} | {c} | " + " | ".join(f"{cell_means.get(f'{p}|{c}|{a}', float('nan')):.2f}" for a in arrangements) + " |")
     lines += ["", "## New accounts by surfacing family (pooled)", "", "| policy | graph | query | other |", "|---|---:|---:|---:|"]
