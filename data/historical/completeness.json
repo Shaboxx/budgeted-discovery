@@ -1,0 +1,14 @@
+{
+  "planned": 1500,
+  "completed": 1500,
+  "failed": 0,
+  "skipped": 0,
+  "interrupted": 0,
+  "world_seeds": 20,
+  "worlds": 60,
+  "strategies": 5,
+  "arrangements": 3,
+  "observation_conditions": 5,
+  "recorded_execution_date": "2026-09-17",
+  "verification": "All 1500 recorded manifests and their listed artifact checksums verified during public-release preparation."
+}
