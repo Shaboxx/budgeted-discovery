@@ -1,6 +1,6 @@
-"""Preregistered analysis of the main grid (docs/main-grid-preregistration.md).
+"""Registered main-grid analysis; see docs/evaluation.md for the released protocol.
 
-Reads an aggregate directory produced by scripts/aggregate_comparisons.py and writes:
+Reads released aggregate records (data/historical) and writes:
   analysis.json  - primary H1 test (graph - query interaction, stress vs complete, 95%),
                    mechanism decomposition (capped/ranked/delayed, Bonferroni 98.3%),
                    H2 arrangement complementarity (95%), null checks, cell means.
