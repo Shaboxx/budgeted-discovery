@@ -6,6 +6,6 @@ __pycache__/
 .hypothesis/
 build/
 dist/
-runs/
+/runs/
 .env
 .env.*
