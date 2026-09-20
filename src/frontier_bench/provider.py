@@ -3,8 +3,13 @@ from __future__ import annotations
 from dataclasses import replace
 from copy import deepcopy
 import re
+import sys
+from contextlib import redirect_stdout
 import numpy as np
-import bm25s
+# BM25S prints an optional resource-module notice during import on Windows.
+# Keep library diagnostics off stdout so CLI JSON stays machine-readable.
+with redirect_stdout(sys.stderr):
+    import bm25s
 from .schemas import Action, Receipt, World, digest, stream_seed
 
 def words(text: str) -> list[str]:

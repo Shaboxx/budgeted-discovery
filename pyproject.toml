@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools==75.8.2", "wheel==0.45.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "budgeted-discovery"
+version = "0.2.0"
+description = "Reproducible data acquisition experiments under request and cost budgets"
+requires-python = ">=3.11,<3.13"
+readme = "README.md"
+authors = [{name = "Shawn Vazin"}]
+dependencies = ["numpy==1.26.4", "networkx==3.4.2", "gymnasium==1.1.1", "bm25s==0.2.14", "river==0.21.2", "PyYAML==6.0.2", "pyarrow==20.0.0", "duckdb==1.5.5", "psutil==7.2.2"]
+
+[project.optional-dependencies]
+test = ["pytest==8.4.2", "hypothesis==6.168.0"]
+
+[project.scripts]
+budgeted-discovery = "frontier_bench.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
