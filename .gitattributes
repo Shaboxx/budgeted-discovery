@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.parquet binary
+# Canonical artifacts are checksum-verified; preserve their exact bytes.
+data/** -text
+reports/demo/** -text
